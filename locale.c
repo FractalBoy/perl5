@@ -703,6 +703,7 @@ S_my_querylocale_i(pTHX_ const unsigned int index)
     DEBUG_Lv(PerlIO_printf(Perl_debug_log,
                            "my_querylocale_i(%s) returning '%s'\n",
                            category_names[index], retval));
+    assert(strNE(retval, ""));
     return retval;
 }
 
@@ -2666,6 +2667,7 @@ Perl_setlocale(const int category, const char * locale)
 
     /* Here, an actual change is being requested.  Do it */
     retval = setlocale_i(cat_index, locale);
+    assert(retval == NULL || strNE(retval, ""));
 
     if (! retval) {
         DEBUG_L(PerlIO_printf(Perl_debug_log,
@@ -2692,6 +2694,7 @@ Perl_setlocale(const int category, const char * locale)
 
     DEBUG_L(PerlIO_printf(Perl_debug_log, "returning '%s'\n", retval));
 
+    assert(strNE(retval, ""));
     return retval;
 
 #endif
@@ -3927,6 +3930,7 @@ S_my_langinfo_i(pTHX_
 
     switch (item) {
       default:
+        assert(item < 0);   /* Make sure using perl_langinfo.h */
         return "";
 
       case RADIXCHAR:
