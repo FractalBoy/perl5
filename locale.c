@@ -1120,6 +1120,7 @@ S_stdize_locale(pTHX_ const int category,
     PERL_ARGS_ASSERT_STDIZE_LOCALE;
 
     if (input_locale == NULL) {
+    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning NULL\n"));
         return NULL;
     }
 
@@ -1127,6 +1128,7 @@ S_stdize_locale(pTHX_ const int category,
 
     /* Most likely, there isn't a problem with the input */
     if (LIKELY(! first_bad)) {
+        DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", input_locale));
         return input_locale;
     }
 
@@ -1174,6 +1176,7 @@ S_stdize_locale(pTHX_ const int category,
             Safefree(individ_locales[i]);
         }
 
+    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
         return retval;
     }
 
@@ -1204,6 +1207,7 @@ S_stdize_locale(pTHX_ const int category,
         first_bad = strpbrk(retval, ",\n");
 
         if (! first_bad) {
+    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
             return retval;
         }
     }
@@ -1222,6 +1226,7 @@ S_stdize_locale(pTHX_ const int category,
         if (! end_bad) { /* No dot or \n: stop before the comma, casting away
                             constness to make the change */
             *((char *) first_bad) = '\0';
+    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
             return retval;
         }
 
@@ -1232,6 +1237,7 @@ S_stdize_locale(pTHX_ const int category,
         /* See if there is still a newline problem */
         first_bad = strchr(first_bad, '\n');
         if (! first_bad) {
+    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
             return retval;
         }
     }
@@ -1240,6 +1246,7 @@ S_stdize_locale(pTHX_ const int category,
      * (Originally, only a trailing \n was stripped.  Unsure what to do if not
      * trailing) */
     *((char *) first_bad) = '\0';
+    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
     return retval;
 
 #    if 0
