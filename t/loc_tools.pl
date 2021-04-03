@@ -31,6 +31,9 @@ sub is_category_valid($) {
     return $Config{ccflags} !~ /\bD?NO_LOCALE_$cat_name\b/;
 }
 
+my $has_LC_CTYPE;
+my $has_LC_ALL;
+
 # LC_ALL can be -1 on some platforms.  And, in fact the implementors could
 # legally use any integer to represent any category.  But it makes the most
 # sense for them to have used small integers.  Below, we create new locale
@@ -94,6 +97,16 @@ sub _my_fail($) {
     }
 }
 
+sub check_setlocale_return($)
+{
+    my $result = shift;
+    print STDERR __FILE__, ": ", __LINE__, ": undef\n"  if $^O =~ /MSWin32/i && ! defined $result; 
+    return 0 unless defined $result;
+    print STDERR __FILE__, ": ", __LINE__, ": $result\n" if $^O =~ /MSWin32/i;
+    return 0 if $result =~ /,/;
+    return $result;
+}
+
 sub _trylocale ($$$$) { # For use only by other functions in this file!
 
     # Adds the locale given by the first parameter to the list given by the
@@ -129,6 +142,9 @@ sub _trylocale ($$$$) { # For use only by other functions in this file!
     my $badutf8 = 0;
     my $plays_well = 1;
 
+    $has_LC_CTYPE = is_category_valid("CTYPE") unless defined $has_LC_CTYPE;
+    $has_LC_ALL   = is_category_valid("ALL") unless defined $has_LC_ALL;
+
     use warnings 'locale';
 
     local $SIG{__WARN__} = sub {
@@ -137,49 +153,35 @@ sub _trylocale ($$$$) { # For use only by other functions in this file!
                     /Locale .* may not work well(?#
                    )|The Perl program will use the expected meanings/i
             } @_;
+        print STDERR __FILE__, ": ", __LINE__, ": @_\n" if $^O =~ /MSWin32/i;
     };
 
     # Incompatible locales aren't warned about unless using locales.
     use locale;
 
-    # Sort the input so CTYPE is first, COLLATE comes after all but ALL.  This
-    # is because locale.c detects bad locales only with CTYPE, and COLLATE on
-    # some platforms can core dump if it is a bad locale.
-    my @sorted;
-    my $has_ctype = 0;
-    my $has_all = 0;
-    my $has_collate = 0;
-    use Data::Dumper;
-    #print STDERR __FILE__, ": ", __LINE__, ": ", Dumper \%category_number, \%category_name, $categories;
-    foreach my $category (@$categories) {
-        die "category '$category' must instead be a number"
-                                            unless $category =~ / ^ -? \d+ $ /x;
-        if ($category_name{$category} eq 'CTYPE') {
-            $has_ctype = 1;
-        }
-        elsif ($category_name{$category} eq 'ALL') {
-            $has_all = 1;
-        }
-        elsif ($category_name{$category} eq 'COLLATE') {
-            $has_collate = 1;
-        }
-        else {
-            push @sorted, $category unless grep { $_ == $category } @sorted;
-        }
+    if ($has_LC_ALL) {
+        return unless check_setlocale_return(setlocale(&POSIX::LC_ALL, $locale));
     }
-    push @sorted, $category_number{'COLLATE'} if $has_collate;
-    push @sorted, $category_number{'ALL'} if $has_all;
-    unshift @sorted, $category_number{'CTYPE'} if $has_ctype || ! $allow_incompatible;
+    else {
+        if ($has_LC_CTYPE) {
+            return unless check_setlocale_return(setlocale(&POSIX::LC_CTYPE, $locale));
+            $categories->@* = grep { $_ != $category_number{'CTYPE'} } $categories->@*;
+        }
 
-    foreach my $category (@sorted) {
-        return unless setlocale($category, $locale);
-        last if $badutf8 || ! $plays_well;
+        if (! $badutf8 && $plays_well) {
+            foreach my $category ($categories->@*) {
+                return unless check_setlocale_return(setlocale($category, $locale));
+                last if $badutf8 || ! $plays_well;
+            }
+        }
     }
 
     if ($badutf8) {
         _my_fail("Verify locale name doesn't contain malformed utf8");
         return;
     }
+
+    print STDERR __FILE__, ": ", __LINE__, ": Adding $locale to list\n" if $^O =~ /MSWin32/i && ( $plays_well || $allow_incompatible);
     push @$list, $locale if $plays_well || $allow_incompatible;
 }
 
@@ -548,12 +550,12 @@ sub is_locale_utf8 ($) { # Return a boolean as to if core Perl thinks the input
 
     my $save_locale = setlocale(&POSIX::LC_CTYPE());
     if (! $save_locale) {
-        ok(0, "Verify could save previous locale");
+        _my_fail("Verify could save previous locale");
         return 0;
     }
 
     if (! setlocale(&POSIX::LC_CTYPE(), $locale)) {
-        ok(0, "Verify could setlocale to $locale");
+        _my_fail("Verify could setlocale to $locale");
         return 0;
     }
 
@@ -566,7 +568,7 @@ sub is_locale_utf8 ($) { # Return a boolean as to if core Perl thinks the input
     # go through testing all the locales on the platform.
     if (CORE::fc(chr utf8::unicode_to_native(0xdf)) ne "ss") {
         if ($locale =~ /UTF-?8/i) {
-            ok (0, "Verify $locale with UTF-8 in name is a UTF-8 locale");
+            _my_fail("Verify $locale with UTF-8 in name is a UTF-8 locale");
         }
     }
     else {

@@ -25,10 +25,10 @@ $Data::Dumper::Useqq = 1;
 $Data::Dumper::Deepcopy = 1;
 
 plan(2);
-$^D = 0x04000000|0x00100000 if $^O eq 'cygwin';
+$^D = 0x04000000|0x00100000 if $^O eq 'cygwin' or $^O =~ /MSWin32/i;
 
 my $thread_count = $^O =~ /linux/i ? 50 : 3;
-my $thread_count = 3;
+$thread_count = 3;
 my $iterations = 1000;
 my $max_result_length = 10000;
 
@@ -150,6 +150,10 @@ SKIP: { # perl #127708
     pass("Didn't segfault");
 }
 
+SKIP: { TODO: {
+        #local our $TODO = "Currently broken";
+        skip("Unsafe locale threads", 1) unless ${^SAFE_LOCALES};
+
 # The second test is several threads nearly simulataneously executing
 # locale-sensitive operations with the categories set to disparate locales.
 # This catches cases where the results of a given category is related to
@@ -186,7 +190,6 @@ sub add_trials($$;$)
         # All categories should be set to the same locale to make sure this
         # test gets the valid results.  If this platform doesn't have LC_ALL,
         # we instead set LC_CTYPE, then this category.
-        use locale;
         next unless setlocale($LC_ALL, $locale);
         if ($master_category ne 'LC_ALL') {
             next unless setlocale(eval "&POSIX::$category_name", $locale);
@@ -196,7 +199,7 @@ sub add_trials($$;$)
         # doing this here in the main thread and with all the locales set to
         # be the same thing.  The test will be that we should get this value
         # under stress, with multiple threads executing with disparate locales
-        my $result = eval $op;
+        my $result = eval "use locale; $op;";
         die "$category_name: '$op': $@" if $@;
         if ($^O eq 'cygwin') {
         print STDERR __FILE__, ": ", __LINE__, ": Undefined result for $locale $category_name: '$op'\n" unless defined $result;
@@ -278,6 +281,7 @@ foreach my $error (sort keys %!) {
     next unless "$description";
     $msg_catalog{$number} = quotemeta "$description";
 }
+print STDERR __FILE__, ": ", __LINE__, ": ", Dumper \%msg_catalog if $^O eq 'cygwin';
 
 # Then just the errnos.
 my @msg_catalog = sort { $a <=> $b } keys %msg_catalog;
@@ -348,20 +352,20 @@ EOT
 # locale-sensitive operations, and then figuring out something to exercise
 # them.
 foreach my $category (@valid_categories) {
-        #print STDERR __FILE__, ": ", __LINE__, ": $category\n";
+        print STDERR __FILE__, ": ", __LINE__, ": $category\n" if $^O eq 'cygwin';
     if ($category eq 'LC_ALL') {
         next;   #XXX we don't currently test this separately
     }
 
     if ($category eq 'LC_COLLATE') {
-        add_trials('LC_COLLATE', 'quotemeta join "", sort reverse map { chr } (0..255)');
+        add_trials('LC_COLLATE', 'quotemeta join "", sort reverse map { chr } (0..255)') unless $^O eq 'cygwin';
 
         # We pass an re to exclude testing locales that don't necessarily have
         # a lt b.
         add_trials('LC_COLLATE', '"a" lt "B"', $english);
         add_trials('LC_COLLATE', 'my $a = "a"; my $b = "B"; POSIX::strcoll($a, $b) < 0;', $english);
 
-        add_trials('LC_COLLATE', 'my $string = quotemeta join "", map { chr } (0..255); POSIX::strxfrm($string)');
+        add_trials('LC_COLLATE', 'my $string = quotemeta join "", map { chr } (0..255); POSIX::strxfrm($string)') unless $^O eq 'cygwin';
         next;
     }
 
@@ -392,7 +396,7 @@ foreach my $category (@valid_categories) {
     }
 
     if ($category eq 'LC_MESSAGES') {
-        add_trials('LC_MESSAGES', "join \"\n\", map { \$! = \$_; \"\$!\" } ($msg_catalog)");
+        add_trials('LC_MESSAGES', "join \"\n\", map { \$! = \$_; \"\$!\" } ($msg_catalog)") unless $^O eq 'cygwin';
         add_trials('LC_MESSAGES', $langinfo_LC_MESSAGES);
         next;
     }
@@ -420,7 +424,7 @@ foreach my $category (@valid_categories) {
     }
 }
 
-print STDERR __FILE__, __LINE__, ": ", Dumper \%tests_prep;# if $^O eq 'cygwin';
+print STDERR __FILE__, __LINE__, ": ", Dumper \%tests_prep if $^O eq 'cygwin';
 #__END__
 
 sub final_ordering
@@ -508,11 +512,8 @@ my $starting_time = sprintf "%.16e", (    time()
                                         + ($thread_count * $per_thread_startup))
                                      * 1_000_000;
 my $switches = "";
-$switches = "switches => [ -DLv ]" if $^O =~ /MSWin32/i || $^O eq 'cygwin';
+$switches = "switches => [ -DLv ]" if $^O eq 'cygwin';
 
-SKIP: { TODO: {
-        #local our $TODO = "Currently broken";
-        #skip("Unsafe locale threads", 1) unless ${^SAFE_LOCALES};
 
         # See if multiple threads can simultaneously change the locale, and give
         # the expected radix results.  On systems without a comma radix locale,

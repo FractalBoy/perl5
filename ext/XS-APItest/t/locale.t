@@ -127,6 +127,7 @@ SKIP: {
     # Get the translation from item name to numeric value.
     I18N::Langinfo->import(keys %items) if $has_nl_langinfo;
 
+    #$^D = 0x04000000|0x00100000; # if $^O =~ /MSWin32/i;
     foreach my $formal_item (sort keys %items) {
       SKIP:
         if (exists $correct_C_responses{$formal_item}) {

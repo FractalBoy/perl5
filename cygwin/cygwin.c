@@ -165,7 +165,7 @@ wide_to_utf8(const wchar_t *wbuf)
     const char *oldlocale;
     dTHX;
 
-    /* Here and elsewhere in this file, we have a critical section to prevent
+    /* XXX shouldn't this use Here and elsewhere in this file, we have a critical section to prevent
      * another thread from changing the locale out from under us.  XXX But why
      * not just use uvchr_to_utf8? */
     oldlocale = Perl_setlocale(LC_CTYPE, NULL);
@@ -200,6 +200,7 @@ utf8_to_wide(const char *buf)
     Perl_setlocale(LC_CTYPE, "utf-8");
     wbuf = (wchar_t *) safemalloc(wlen);
     /* utf8_to_uvchr_buf(pathname, pathname + wlen, wpath) or Encoding::_utf8_to_bytes(sv, "UCS-2BE"); */
+    /* XXX shouldn't this use S_Win_utf8_string_to_wstring(const char * utf8_string) */
     LC_CTYPE_LOCK;
     wlen = mbsrtowcs(wbuf, (const char**)&buf, wlen, &mbs);
     LC_CTYPE_UNLOCK;

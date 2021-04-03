@@ -212,6 +212,23 @@ static const char C_thousands_sep[] = "";
 #  define restore_toggled_locale_c(cat, locale)                                   \
                              restore_toggled_locale_i(cat##_INDEX_, locale)
 
+/* Some platforms don't deal well with non-ASCII strings in locale category X
+ * when LC_CTYPE is a different category (actually, it's probably when X is
+ * UTF-8 and LC_CTYPE isn't, or vice versa).  There is explicit code to bring
+ * the categories into sync.  Most platforms don't seem to care when producing
+ * nl_langinfo() items, including the radix character, but cygwin does.  By
+ * OR'ing this into the newlocale() mask, we can, at no cost to us, cause the 
+ * categories to automatically be in sync where newlocale is used. XXX */
+#  if defined(USE_LOCALE_CTYPE) && defined(LC_CTYPE_MASK)
+#    define SAFETY_MASK LC_CTYPE_MASK
+#  else
+#    define SAFETY_MASK 0
+#  endif
+
+#  ifdef __CYGWIN__
+#    define LC_CTYPE_MUST_MATCH
+#  endif
+
 /* Two parallel arrays indexed by our mapping of category numbers into small
  * non-negative indexes; first the locale categories Perl uses on this system,
  * used to do the inverse mapping.  The second array is their names.  These
@@ -1358,8 +1375,9 @@ S_stdize_locale(pTHX_ const int category,
      *                 sure the individual categories are ok.
      * 3) "Macedonian_Macedonia, FYRO.1251".
      *                 This is a MS bug, in which the country name has a comma,
-     *                 but its parser can't cope with that.  This routine turns that into
-     *                 "Macedonian.1251"
+     *                 but its parser can't cope with that.  This routine turns
+     *                 that into "Macedonian", because the expected
+     *                 "Macedonian.1251" doesn't work.
      *
      * If no changes to the input was made, it is returned; otherwise the
      * changed version is stored into memory at *buf, with *buf_size set to its
@@ -1468,30 +1486,17 @@ S_stdize_locale(pTHX_ const int category,
      * that is problematic */
 
     if (*first_bad == ',') {
-        const char * end_bad = strpbrk(retval, ".\n");
         const char * underscore = strchr(retval, '_');
 
         if (underscore) {
             first_bad = underscore;
         }
 
-        if (! end_bad) { /* No dot or \n: stop before the comma, casting away
-                            constness to make the change */
-            *((char *) first_bad) = '\0';
-    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
-            return retval;
-        }
-
-        /* Splice out the comma clause; the overwrite includes the trailing
-         * NUL. */
-        Move(end_bad, first_bad, strlen(end_bad) + 1, char);
-
-        /* See if there is still a newline problem */
-        first_bad = strchr(first_bad, '\n');
-        if (! first_bad) {
-    DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
-            return retval;
-        }
+        /* Stop before the comma or underscore, casting away constness to make
+         * the change */
+        *((char *) first_bad) = '\0';
+        DEBUG_Lv(PerlIO_printf(Perl_debug_log, "stdize_locale returning '%s'\n", retval));
+        return retval;
     }
 
     /* Here, the problem must be a \n.  Get rid of it and what follows.
@@ -1585,7 +1590,7 @@ S_calculate_LC_ALL(pTHX_ const char ** individ_locales)
     Size_t names_len = 0;
     bool are_all_categories_the_same_locale = TRUE;
     char * aggregate_locale;
-    char * previous_start;
+    char * previous_start = NULL;
     char * this_start;
     Size_t entry_len = 0;
 
@@ -1946,7 +1951,7 @@ S_new_ctype(pTHX_ const char *newctype)
         PL_warn_locale = NULL;
     }
 
-    save_newctype = savepv(newctype);
+    save_newctype = savepv(newctype);   /* Can avoid this if do it below; same with new_numeric */
     if (PL_in_utf8_CTYPE_locale && isNAME_C_OR_POSIX(save_newctype)) {
         /*XXX assert(0);*/
     }
@@ -2753,6 +2758,10 @@ S_save_to_buffer(const char * string, const char **buf, Size_t *buf_size)
         DEBUG_Lv(PerlIO_printf(Perl_debug_log,
                  "Copying %s to %p\n", string, *buf));
     }
+    if (instr(string, REPLACEMENT_CHARACTER_UTF8)) {
+        dTHX;
+        PerlIO_printf(Perl_debug_log, "# %s: %d: Bad value '%s' %s\n", __FILE__, __LINE__, string, querylocale_c(LC_ALL));
+    }
 
     Copy(string, *buf, string_size, char);
     return *buf;
@@ -3076,12 +3085,11 @@ S_my_localeconv(pTHX_ const int item)
 
     {
         const locale_t cur = use_curlocale_scratch();
-        locale_t with_numeric = NULL;
+        locale_t with_numeric = duplocale(cur);
 
         /* Just create a new locale object with what we've got, but using the
          * underlying LC_NUMERIC locale */
-        with_numeric = duplocale(cur);
-        with_numeric = newlocale(LC_NUMERIC_MASK, PL_numeric_name, with_numeric);
+        with_numeric = newlocale(LC_NUMERIC_MASK|SAFETY_MASK, PL_numeric_name, with_numeric);
 
         retval = copy_localeconv(aTHX_ localeconv_l(with_numeric),
                                        numeric_locale_is_utf8,
@@ -3297,7 +3305,7 @@ S_populate_localeconv(pTHX_ const struct lconv *lcbuf,
     /* For each enabled category ... */
     for (i = 0; i < C_ARRAY_LENGTH(category_indices) - 1; i++) {
         const unsigned cat_index = category_indices[i];
-        int locale_is_utf8;
+        int locale_is_utf8 = 0;
         const char *locale;
 
         /* ( = NULL silences a compiler warning; would segfault if it could
@@ -3828,6 +3836,8 @@ S_my_langinfo_i(pTHX_
         locale_t cur;
         bool need_free = FALSE;
 
+#    ifndef LC_CTYPE_MUST_MATCH
+
         if (locale == USE_UNDERLYING_LOCALE) {
             cur = use_curlocale_scratch();
             locale = NULL;
@@ -3837,8 +3847,13 @@ S_my_langinfo_i(pTHX_
             cur = PL_underlying_numeric_obj;
             locale = PL_numeric_name;
         }
-        else {
-            cur = newlocale(category_masks[cat_index], locale, (locale_t) 0);
+        else
+
+#    endif
+
+        {
+            cur = newlocale(category_masks[cat_index]|SAFETY_MASK,
+                            locale, (locale_t) 0);
             need_free = TRUE;
         }
 
@@ -3859,6 +3874,10 @@ S_my_langinfo_i(pTHX_
 #  elif defined(HAS_NL_LANGINFO) /* nl_langinfo() is available.  */
 
 /* The second version of my_langinfo() is if we have plain nl_langinfo() */
+
+#    ifdef LC_CTYPE_MUST_MATCH
+#      error Unimplemented
+#    endif
 
     {
         const char * orig_switched_locale = NULL;
@@ -3902,6 +3921,10 @@ S_my_langinfo_i(pTHX_
 /* And the third and final completion is where we have to emulate
  * nl_langinfo().  There are various possibilities depending on the
  * Configuration */
+
+#    ifdef LC_CTYPE_MUST_MATCH
+#      error Unimplemented
+#    endif
 
     /* Almost all the items will have ASCII return values.  Set that here, and
      * override if necessary */
